@@ -576,14 +576,15 @@ def main():
     # sync
     p_sync = sub.add_parser(
         "sync",
-        help="Bidirectional sync between local ChromaDB palace and Cloudflare D1/Vectorize",
+        help="Incremental bidirectional sync between local ChromaDB and Cloudflare D1/Vectorize",
     )
     p_sync.add_argument(
         "direction",
-        choices=["push", "pull"],
-        help="push = local → Cloudflare, pull = Cloudflare → local",
+        choices=["push", "pull", "daemon"],
+        help="push = local → CF, pull = CF → local, daemon = continuous background sync",
     )
     p_sync.add_argument("--batch", type=int, default=100, help="Batch size (default: 100)")
+    p_sync.add_argument("--interval", type=int, default=5, help="Daemon poll interval in minutes (default: 5)")
     p_sync.add_argument(
         "--dry-run",
         action="store_true",
@@ -616,12 +617,14 @@ def main():
         return
 
     if args.command == "sync":
-        from .sync import push, pull
+        from .sync import push, pull, daemon
         palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
         if args.direction == "push":
             push(palace_path, batch_size=args.batch, dry_run=args.dry_run)
-        else:
+        elif args.direction == "pull":
             pull(palace_path, batch_size=args.batch, dry_run=args.dry_run)
+        else:
+            daemon(palace_path, interval_minutes=args.interval, dry_run=args.dry_run)
         return
 
     dispatch = {
