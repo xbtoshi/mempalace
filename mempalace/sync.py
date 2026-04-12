@@ -48,17 +48,43 @@ def _cf_backend():
 
 
 def _fetch_all_local(palace_path: str) -> List[Dict[str, Any]]:
-    """Fetch all drawers from local ChromaDB as a list of dicts."""
-    col = _local_backend(palace_path, create=False)
-    data = col.get(limit=200_000)
-    drawers = []
-    for i, drawer_id in enumerate(data["ids"]):
-        drawers.append({
-            "id": drawer_id,
-            "document": data["documents"][i],
-            "metadata": data["metadatas"][i],
-        })
-    return drawers
+    """Fetch all drawers from local palace.
+
+    Tries ChromaDB API first. If that fails (version mismatch), falls back
+    to reading directly from SQLite — same approach as mempalace migrate.
+    """
+    try:
+        col = _local_backend(palace_path, create=False)
+        data = col.get(limit=200_000)
+        drawers = []
+        for i, drawer_id in enumerate(data["ids"]):
+            drawers.append({
+                "id": drawer_id,
+                "document": data["documents"][i],
+                "metadata": data["metadatas"][i],
+            })
+        return drawers
+    except Exception as e:
+        # ChromaDB version mismatch or corrupt palace — fall back to raw SQLite
+        import os
+        db_path = os.path.join(palace_path, "chroma.sqlite3")
+        if not os.path.isfile(db_path):
+            raise FileNotFoundError(
+                f"No palace found at {palace_path}. "
+                "Run: mempalace init <dir> && mempalace mine <dir>"
+            ) from e
+        print(f"  ChromaDB API failed ({e})")
+        print("  Falling back to direct SQLite read (version mismatch — run 'mempalace migrate' to fix permanently)")
+        from .migrate import extract_drawers_from_sqlite
+        raw = extract_drawers_from_sqlite(db_path)
+        return [
+            {
+                "id": d["id"],
+                "document": d["document"],
+                "metadata": d["metadata"],
+            }
+            for d in raw
+        ]
 
 
 def _fetch_all_remote(batch_size: int = DEFAULT_BATCH) -> List[Dict[str, Any]]:
