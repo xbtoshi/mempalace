@@ -399,3 +399,85 @@ class KnowledgeGraph:
             # Interests
             for interest in facts.get("interests", []):
                 self.add_triple(name, "loves", interest.capitalize(), valid_from="2025-01-01")
+
+
+class CloudflareKnowledgeGraph:
+    """KnowledgeGraph backed by Cloudflare D1 via the palace-api worker.
+    Same interface as KnowledgeGraph but all operations are HTTP calls."""
+
+    def __init__(self, api_url: str = None, api_key: str = None):
+        import httpx
+        self._api_url = (api_url or os.environ.get("MEMPALACE_CF_API_URL", "")).rstrip("/")
+        self._api_key = api_key or os.environ.get("MEMPALACE_CF_API_KEY", "")
+        self._client = httpx.Client(
+            base_url=self._api_url,
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            timeout=30.0,
+        )
+
+    def close(self):
+        self._client.close()
+
+    def add_entity(self, name: str, entity_type: str = "unknown", properties: dict = None):
+        # Entities are auto-created by add_triple; explicit add not needed for CF
+        # but we support it for compatibility
+        eid = name.lower().replace(" ", "_").replace("'", "")
+        return eid
+
+    def add_triple(self, subject, predicate, obj, valid_from=None, valid_to=None,
+                   confidence=1.0, source_closet=None, source_file=None):
+        r = self._client.post("/kg/add", json={
+            "subject": subject, "predicate": predicate, "object": obj,
+            "valid_from": valid_from, "valid_to": valid_to,
+            "confidence": confidence, "source_closet": source_closet,
+            "source_file": source_file,
+        })
+        r.raise_for_status()
+        data = r.json()
+        return data.get("triple_id", "")
+
+    def invalidate(self, subject, predicate, obj, ended=None):
+        r = self._client.post("/kg/invalidate", json={
+            "subject": subject, "predicate": predicate, "object": obj,
+            "ended": ended,
+        })
+        r.raise_for_status()
+
+    def query_entity(self, name, as_of=None, direction="outgoing"):
+        params = {"entity": name, "direction": direction}
+        if as_of:
+            params["as_of"] = as_of
+        r = self._client.get("/kg/query", params=params)
+        r.raise_for_status()
+        return r.json().get("results", [])
+
+    def query_relationship(self, predicate, as_of=None):
+        # Not a direct endpoint yet — use timeline + filter
+        results = self.timeline()
+        pred = predicate.lower().replace(" ", "_")
+        filtered = [r for r in results if r["predicate"] == pred]
+        if as_of:
+            filtered = [r for r in filtered
+                        if (not r.get("valid_from") or r["valid_from"] <= as_of)
+                        and (not r.get("valid_to") or r["valid_to"] >= as_of)]
+        return filtered
+
+    def timeline(self, entity_name=None):
+        params = {}
+        if entity_name:
+            params["entity"] = entity_name
+        r = self._client.get("/kg/timeline", params=params)
+        r.raise_for_status()
+        return r.json().get("timeline", [])
+
+    def stats(self):
+        r = self._client.get("/kg/stats")
+        r.raise_for_status()
+        return r.json()
+
+    def seed_from_entity_facts(self, entity_facts):
+        # Delegate to add_triple which calls the CF API
+        for key, facts in entity_facts.items():
+            name = facts.get("full_name", key.capitalize())
+            for interest in facts.get("interests", []):
+                self.add_triple(name, "loves", interest.capitalize(), valid_from="2025-01-01")

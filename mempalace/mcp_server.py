@@ -37,7 +37,7 @@ from .query_sanitizer import sanitize_query
 from .searcher import search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
 
-from .knowledge_graph import KnowledgeGraph
+from .knowledge_graph import KnowledgeGraph, CloudflareKnowledgeGraph
 
 logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
 logger = logging.getLogger("mempalace_mcp")
@@ -62,9 +62,11 @@ if _args.palace:
     os.environ["MEMPALACE_PALACE_PATH"] = os.path.abspath(_args.palace)
 
 _config = MempalaceConfig()
-# Only override KG path when --palace is explicitly provided; otherwise use
-# KnowledgeGraph's default (~/.mempalace/knowledge_graph.sqlite3).
-if _args.palace:
+# Use Cloudflare KG when backend is set; otherwise local SQLite.
+if os.environ.get("MEMPALACE_BACKEND") == "cloudflare":
+    _kg = CloudflareKnowledgeGraph()
+    logger.info("KG backend: Cloudflare D1 (%s)", os.environ.get("MEMPALACE_CF_API_URL", ""))
+elif _args.palace:
     _kg = KnowledgeGraph(db_path=os.path.join(_config.palace_path, "knowledge_graph.sqlite3"))
 else:
     _kg = KnowledgeGraph()

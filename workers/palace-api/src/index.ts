@@ -252,4 +252,159 @@ app.get("/status", async (c) => {
   });
 });
 
+// ── Knowledge Graph endpoints ────────────────────────────────────
+
+function entityId(name: string): string {
+  return name.toLowerCase().replace(/ /g, "_").replace(/'/g, "");
+}
+
+// POST /kg/add — add a triple (auto-creates entities)
+app.post("/kg/add", async (c) => {
+  const body = await c.req.json<{
+    subject: string;
+    predicate: string;
+    object: string;
+    valid_from?: string;
+    valid_to?: string;
+    confidence?: number;
+    source_closet?: string;
+    source_file?: string;
+  }>();
+
+  if (!body.subject || !body.predicate || !body.object) {
+    return c.json({ error: "subject, predicate, and object are required" }, 400);
+  }
+
+  const subId = entityId(body.subject);
+  const objId = entityId(body.object);
+  const pred = body.predicate.toLowerCase().replace(/ /g, "_");
+
+  // Auto-create entities
+  await c.env.DB.prepare(
+    "INSERT OR IGNORE INTO kg_entities (id, name) VALUES (?, ?)"
+  ).bind(subId, body.subject).run();
+  await c.env.DB.prepare(
+    "INSERT OR IGNORE INTO kg_entities (id, name) VALUES (?, ?)"
+  ).bind(objId, body.object).run();
+
+  // Check for existing identical active triple
+  const existing = await c.env.DB.prepare(
+    "SELECT id FROM kg_triples WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL"
+  ).bind(subId, pred, objId).first<{ id: string }>();
+
+  if (existing) {
+    return c.json({ success: true, triple_id: existing.id, fact: `${body.subject} → ${pred} → ${body.object}`, existing: true });
+  }
+
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",
+    new TextEncoder().encode(`${body.valid_from}${new Date().toISOString()}`))
+  )).map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 12);
+  const tripleId = `t_${subId}_${pred}_${objId}_${hash}`;
+
+  await c.env.DB.prepare(
+    `INSERT INTO kg_triples (id, subject, predicate, object, valid_from, valid_to, confidence, source_closet, source_file)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    tripleId, subId, pred, objId,
+    body.valid_from ?? null, body.valid_to ?? null,
+    body.confidence ?? 1.0, body.source_closet ?? null, body.source_file ?? null
+  ).run();
+
+  return c.json({ success: true, triple_id: tripleId, fact: `${body.subject} → ${pred} → ${body.object}` });
+});
+
+// POST /kg/invalidate — mark a triple as no longer valid
+app.post("/kg/invalidate", async (c) => {
+  const body = await c.req.json<{ subject: string; predicate: string; object: string; ended?: string }>();
+  const subId = entityId(body.subject);
+  const objId = entityId(body.object);
+  const pred = body.predicate.toLowerCase().replace(/ /g, "_");
+  const ended = body.ended || new Date().toISOString().slice(0, 10);
+
+  await c.env.DB.prepare(
+    "UPDATE kg_triples SET valid_to=? WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL"
+  ).bind(ended, subId, pred, objId).run();
+
+  return c.json({ success: true });
+});
+
+// GET /kg/query?entity=X&direction=outgoing&as_of=2026-01-01
+app.get("/kg/query", async (c) => {
+  const name = c.req.query("entity");
+  if (!name) return c.json({ error: "entity param required" }, 400);
+  const eid = entityId(name);
+  const direction = c.req.query("direction") || "both";
+  const asOf = c.req.query("as_of");
+
+  const results: unknown[] = [];
+
+  if (direction === "outgoing" || direction === "both") {
+    let q = "SELECT t.*, e.name as obj_name FROM kg_triples t JOIN kg_entities e ON t.object = e.id WHERE t.subject = ?";
+    const p: unknown[] = [eid];
+    if (asOf) { q += " AND (t.valid_from IS NULL OR t.valid_from <= ?) AND (t.valid_to IS NULL OR t.valid_to >= ?)"; p.push(asOf, asOf); }
+    const { results: rows } = await c.env.DB.prepare(q).bind(...p).all();
+    for (const r of rows as any[]) {
+      results.push({ direction: "outgoing", subject: name, predicate: r.predicate, object: r.obj_name, valid_from: r.valid_from, valid_to: r.valid_to, confidence: r.confidence, current: r.valid_to === null });
+    }
+  }
+
+  if (direction === "incoming" || direction === "both") {
+    let q = "SELECT t.*, e.name as sub_name FROM kg_triples t JOIN kg_entities e ON t.subject = e.id WHERE t.object = ?";
+    const p: unknown[] = [eid];
+    if (asOf) { q += " AND (t.valid_from IS NULL OR t.valid_from <= ?) AND (t.valid_to IS NULL OR t.valid_to >= ?)"; p.push(asOf, asOf); }
+    const { results: rows } = await c.env.DB.prepare(q).bind(...p).all();
+    for (const r of rows as any[]) {
+      results.push({ direction: "incoming", subject: r.sub_name, predicate: r.predicate, object: name, valid_from: r.valid_from, valid_to: r.valid_to, confidence: r.confidence, current: r.valid_to === null });
+    }
+  }
+
+  return c.json({ entity: name, results });
+});
+
+// GET /kg/stats
+app.get("/kg/stats", async (c) => {
+  const entities = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM kg_entities").first<{ cnt: number }>();
+  const triples = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM kg_triples").first<{ cnt: number }>();
+  const current = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM kg_triples WHERE valid_to IS NULL").first<{ cnt: number }>();
+  const { results: preds } = await c.env.DB.prepare("SELECT DISTINCT predicate FROM kg_triples ORDER BY predicate").all<{ predicate: string }>();
+
+  const total = triples?.cnt ?? 0;
+  const cur = current?.cnt ?? 0;
+
+  return c.json({
+    entities: entities?.cnt ?? 0,
+    triples: total,
+    current_facts: cur,
+    expired_facts: total - cur,
+    relationship_types: preds.map(r => r.predicate),
+  });
+});
+
+// GET /kg/timeline?entity=X (optional)
+app.get("/kg/timeline", async (c) => {
+  const entityName = c.req.query("entity");
+  let q: string;
+  const p: unknown[] = [];
+
+  if (entityName) {
+    const eid = entityId(entityName);
+    q = `SELECT t.*, s.name as sub_name, o.name as obj_name FROM kg_triples t
+         JOIN kg_entities s ON t.subject = s.id JOIN kg_entities o ON t.object = o.id
+         WHERE (t.subject = ? OR t.object = ?) ORDER BY t.valid_from ASC NULLS LAST LIMIT 100`;
+    p.push(eid, eid);
+  } else {
+    q = `SELECT t.*, s.name as sub_name, o.name as obj_name FROM kg_triples t
+         JOIN kg_entities s ON t.subject = s.id JOIN kg_entities o ON t.object = o.id
+         ORDER BY t.valid_from ASC NULLS LAST LIMIT 100`;
+  }
+
+  const { results } = await c.env.DB.prepare(q).bind(...p).all();
+  return c.json({
+    timeline: (results as any[]).map(r => ({
+      subject: r.sub_name, predicate: r.predicate, object: r.obj_name,
+      valid_from: r.valid_from, valid_to: r.valid_to, current: r.valid_to === null,
+    })),
+  });
+});
+
 export default app;
