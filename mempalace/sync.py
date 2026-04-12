@@ -33,7 +33,7 @@ from .sync_state import (
     mark_synced, mark_deleted, log_conflict
 )
 
-DEFAULT_BATCH = 100
+DEFAULT_BATCH = 25
 DEFAULT_INTERVAL = 5  # minutes
 
 
@@ -236,6 +236,8 @@ def push(palace_path: str, batch_size: int = DEFAULT_BATCH, dry_run: bool = Fals
         # Save state periodically so a crash mid-run resumes from here
         if pushed % CHECKPOINT_EVERY < batch_size:
             save_state(state)
+        # Small pause between batches — lets Workers AI recover between calls
+        time.sleep(0.5)
 
     save_state(state)
 

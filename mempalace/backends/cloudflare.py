@@ -63,7 +63,7 @@ class CloudflareCollection(BaseCollection):
         documents: List[str],
         ids: List[str],
         metadatas: Optional[List[Dict[str, Any]]] = None,
-        _retries: int = 3,
+        _retries: int = 5,
     ) -> None:
         import time as _time
         drawers = []
@@ -86,7 +86,9 @@ class CloudflareCollection(BaseCollection):
             except Exception as exc:
                 last_exc = exc
                 if attempt < _retries - 1:
-                    wait = 2 ** attempt  # 1s, 2s, 4s
+                    # Exponential backoff: 2s, 4s, 8s, 16s
+                    # Longer waits needed for Workers AI rate limit recovery
+                    wait = 2 ** (attempt + 1)
                     print(f"  Retry {attempt + 1}/{_retries - 1} after {wait}s (error: {exc})")
                     _time.sleep(wait)
         raise last_exc
