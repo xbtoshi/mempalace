@@ -1,0 +1,19 @@
+{
+  "name": "palace-api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 execute mempalace --file=./schema.sql",
+    "vectorize:create": "wrangler vectorize create mempalace-drawers --dimensions=768 --metric=cosine"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0",
+    "@cloudflare/workers-types": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "hono": "^4.0.0"
+  }
+}

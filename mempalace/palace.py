@@ -2,11 +2,14 @@
 palace.py — Shared palace operations.
 
 Consolidates collection access patterns used by both miners and the MCP server.
+
+Backend selection via MEMPALACE_BACKEND env var:
+  "chroma"      — local ChromaDB (default)
+  "cloudflare"  — CF D1 + Vectorize via palace-api Worker
+                  requires: MEMPALACE_CF_API_URL, MEMPALACE_CF_API_KEY
 """
 
 import os
-
-from .backends.chroma import ChromaBackend
 
 SKIP_DIRS = {
     ".git",
@@ -34,7 +37,16 @@ SKIP_DIRS = {
     "target",
 }
 
-_DEFAULT_BACKEND = ChromaBackend()
+
+def _build_backend():
+    """Instantiate the configured backend."""
+    backend = os.environ.get("MEMPALACE_BACKEND", "chroma").lower()
+    if backend == "cloudflare":
+        from .backends.cloudflare import CloudflareBackend
+        return CloudflareBackend()
+    else:
+        from .backends.chroma import ChromaBackend
+        return ChromaBackend()
 
 
 def get_collection(
@@ -42,8 +54,8 @@ def get_collection(
     collection_name: str = "mempalace_drawers",
     create: bool = True,
 ):
-    """Get the palace collection through the backend layer."""
-    return _DEFAULT_BACKEND.get_collection(
+    """Get the palace collection through the configured backend."""
+    return _build_backend().get_collection(
         palace_path,
         collection_name=collection_name,
         create=create,

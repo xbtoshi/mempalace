@@ -573,6 +573,23 @@ def main():
         "--yes", action="store_true", help="Skip confirmation for destructive changes"
     )
 
+    # sync
+    p_sync = sub.add_parser(
+        "sync",
+        help="Bidirectional sync between local ChromaDB palace and Cloudflare D1/Vectorize",
+    )
+    p_sync.add_argument(
+        "direction",
+        choices=["push", "pull"],
+        help="push = local → Cloudflare, pull = Cloudflare → local",
+    )
+    p_sync.add_argument("--batch", type=int, default=100, help="Batch size (default: 100)")
+    p_sync.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be synced without making any changes",
+    )
+
     sub.add_parser("status", help="Show what's been filed")
 
     args = parser.parse_args()
@@ -596,6 +613,15 @@ def main():
             return
         args.name = name
         cmd_instructions(args)
+        return
+
+    if args.command == "sync":
+        from .sync import push, pull
+        palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
+        if args.direction == "push":
+            push(palace_path, batch_size=args.batch, dry_run=args.dry_run)
+        else:
+            pull(palace_path, batch_size=args.batch, dry_run=args.dry_run)
         return
 
     dispatch = {

@@ -1,0 +1,16 @@
+name = "mempalace-palace-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mempalace"
+database_id = "REPLACE_AFTER_CF_CREATE"
+
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "mempalace-drawers"
+
+[ai]
+binding = "AI"
