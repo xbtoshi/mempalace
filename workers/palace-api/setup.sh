@@ -184,14 +184,36 @@ else
   # Validate required env vars
   if [[ -z "${MEMPALACE_CF_API_URL:-}" ]]; then
     err "MEMPALACE_CF_API_URL is not set. Export it before running with --skip-deploy."
+    err "If you haven't deployed yet, run without --skip-deploy."
     exit 1
   fi
   if [[ -z "${MEMPALACE_CF_API_KEY:-}" ]]; then
     err "MEMPALACE_CF_API_KEY is not set. Export it before running with --skip-deploy."
+    err "This is the secret you set with: wrangler secret put PALACE_API_KEY"
     exit 1
   fi
   WORKER_URL="$MEMPALACE_CF_API_URL"
   ok "Using Worker URL: $WORKER_URL"
+
+  # Quick live check before proceeding
+  info "Checking Worker is live..."
+  HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer $MEMPALACE_CF_API_KEY" \
+    "$WORKER_URL/status" 2>/dev/null || echo "000")
+
+  if [[ "$HTTP_CODE" == "200" ]]; then
+    ok "Worker is live"
+  elif [[ "$HTTP_CODE" == "401" ]]; then
+    err "Worker responded 401 — MEMPALACE_CF_API_KEY is wrong."
+    err "Check the secret you set with: wrangler secret put PALACE_API_KEY"
+    exit 1
+  elif [[ "$HTTP_CODE" == "000" ]]; then
+    err "Worker not reachable at $WORKER_URL"
+    err "It may not be deployed yet. Run without --skip-deploy to deploy first."
+    exit 1
+  else
+    warn "Worker returned HTTP $HTTP_CODE — proceeding anyway."
+  fi
 fi
 
 # ── Verify Worker is alive ───────────────────────────────────
@@ -227,12 +249,12 @@ else
     MEMPALACE_BACKEND=cloudflare \
       MEMPALACE_CF_API_URL="${MEMPALACE_CF_API_URL:-$WORKER_URL}" \
       MEMPALACE_CF_API_KEY="${MEMPALACE_CF_API_KEY:-}" \
-      mempalace sync push --palace "$PALACE_PATH" --dry-run
+      mempalace --palace "$PALACE_PATH" sync push --dry-run
   else
     MEMPALACE_BACKEND=cloudflare \
       MEMPALACE_CF_API_URL="${MEMPALACE_CF_API_URL:-$WORKER_URL}" \
       MEMPALACE_CF_API_KEY="${MEMPALACE_CF_API_KEY:-}" \
-      mempalace sync push --palace "$PALACE_PATH"
+      mempalace --palace "$PALACE_PATH" sync push
   fi
 fi
 
