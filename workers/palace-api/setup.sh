@@ -197,19 +197,24 @@ else
 
   # Quick live check before proceeding
   info "Checking Worker is live..."
-  HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
     -H "Authorization: Bearer $MEMPALACE_CF_API_KEY" \
-    "$WORKER_URL/status" 2>/dev/null || echo "000")
+    "$WORKER_URL/status" 2>/dev/null)
+  CURL_EXIT=$?
 
-  if [[ "$HTTP_CODE" == "200" ]]; then
+  if [[ $CURL_EXIT -ne 0 ]]; then
+    err "Worker not reachable at $WORKER_URL (curl exit $CURL_EXIT)"
+    err "It may not be deployed yet. Run without --skip-deploy to deploy first."
+    exit 1
+  elif [[ "$HTTP_CODE" == "200" ]]; then
     ok "Worker is live"
   elif [[ "$HTTP_CODE" == "401" ]]; then
     err "Worker responded 401 — MEMPALACE_CF_API_KEY is wrong."
     err "Check the secret you set with: wrangler secret put PALACE_API_KEY"
     exit 1
-  elif [[ "$HTTP_CODE" == "000" ]]; then
-    err "Worker not reachable at $WORKER_URL"
-    err "It may not be deployed yet. Run without --skip-deploy to deploy first."
+  elif [[ "$HTTP_CODE" == "500" ]]; then
+    err "Worker returned 500 — likely a misconfiguration (D1/Vectorize binding missing?)."
+    err "Check: wrangler tail mempalace-palace-api"
     exit 1
   else
     warn "Worker returned HTTP $HTTP_CODE — proceeding anyway."

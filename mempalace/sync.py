@@ -39,7 +39,7 @@ DEFAULT_INTERVAL = 5  # minutes
 
 def _local_backend(palace_path: str, create: bool = False):
     from .backends.chroma import ChromaBackend
-    return ChromaBackend().get_collection(palace_path, create=create)
+    return ChromaBackend().get_collection(palace_path, collection_name="mempalace_drawers", create=create)
 
 
 def _cf_backend():
