@@ -58,6 +58,10 @@ def normalize(filepath: str) -> str:
 def _try_normalize_json(content: str) -> Optional[str]:
     """Try all known JSON chat schemas."""
 
+    normalized = _try_hermes_jsonl(content)
+    if normalized:
+        return normalized
+
     normalized = _try_claude_code_jsonl(content)
     if normalized:
         return normalized
@@ -76,6 +80,90 @@ def _try_normalize_json(content: str) -> Optional[str]:
         if normalized:
             return normalized
 
+    return None
+
+
+def _try_hermes_jsonl(content: str) -> Optional[str]:
+    """Hermes Agent JSONL sessions (~/.hermes/sessions/*.jsonl).
+
+    Format: one JSON object per line with {"role": "user"/"assistant"/"tool", "content": ...}
+    First line may be {"role": "session_meta", ...} — skip it.
+    Tool lines are appended to the previous assistant turn.
+    """
+    lines = [line.strip() for line in content.strip().split("\n") if line.strip()]
+    if not lines:
+        return None
+
+    # Must have at least one {"role": ...} line to qualify
+    has_role = False
+    for line in lines[:5]:
+        try:
+            obj = json.loads(line)
+            if isinstance(obj, dict) and "role" in obj and "type" not in obj:
+                has_role = True
+                break
+        except json.JSONDecodeError:
+            continue
+    if not has_role:
+        return None
+
+    messages = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+
+        role = entry.get("role", "")
+        if role == "session_meta":
+            continue
+
+        content_val = entry.get("content", "")
+        if isinstance(content_val, list):
+            # Extract text blocks
+            parts = []
+            for block in content_val:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        parts.append(block.get("text", ""))
+                    elif block.get("type") == "tool_result":
+                        inner = block.get("content", "")
+                        if isinstance(inner, list):
+                            for ib in inner:
+                                if isinstance(ib, dict) and ib.get("type") == "text":
+                                    parts.append(ib.get("text", ""))
+                        elif isinstance(inner, str):
+                            parts.append(inner)
+                elif isinstance(block, str):
+                    parts.append(block)
+            text = "\n".join(p for p in parts if p.strip())
+        elif isinstance(content_val, str):
+            text = content_val
+        else:
+            continue
+
+        text = text.strip()
+        if not text:
+            continue
+
+        if role == "tool":
+            # Append tool output to previous assistant turn
+            if messages and messages[-1][0] == "assistant":
+                messages[-1] = ("assistant", messages[-1][1] + "\n[tool] " + text[:500])
+            continue
+
+        if role in ("user", "human"):
+            messages.append(("user", text))
+        elif role == "assistant":
+            if messages and messages[-1][0] == "assistant":
+                messages[-1] = ("assistant", messages[-1][1] + "\n" + text)
+            else:
+                messages.append(("assistant", text))
+
+    if len(messages) >= 2:
+        return _messages_to_transcript(messages)
     return None
 
 
