@@ -97,6 +97,42 @@ MEMPALACE_PALACE_PATH=~/.mempalace/palace
 
 ## Importing your existing local palace
 
+### Step 1 — Fix ChromaDB version mismatch (if needed)
+
+If your palace was created with a different ChromaDB version you'll see
+`KeyError: '_type'` when sync tries to read it. Check first:
+
+```bash
+mempalace migrate --dry-run
+```
+
+If it says "Palace is NOT readable" — run the migration before pushing:
+
+```bash
+mempalace migrate
+```
+
+This reads your palace directly from SQLite, rebuilds it with your current
+ChromaDB version, and preserves all drawer IDs and metadata. It backs up
+your old palace to `~/.mempalace/palace.pre-migrate.<timestamp>` first.
+
+> With 23k+ drawers this takes a few minutes. Let it finish completely
+> before pushing to CF.
+
+### Step 2 — Deploy the Worker with the correct batch size
+
+If you already deployed the Worker, redeploy after pulling the latest code
+to get the reduced embed batch size (25 instead of 100 — avoids Workers AI
+timeouts on free tier):
+
+```bash
+cd workers/palace-api
+git pull origin feature/cloudflare-d1-backend
+wrangler deploy
+```
+
+### Step 3 — Push
+
 ```bash
 # Dry run first — see what would be pushed
 mempalace --palace ~/.mempalace/palace sync push --dry-run
@@ -105,10 +141,19 @@ mempalace --palace ~/.mempalace/palace sync push --dry-run
 mempalace --palace ~/.mempalace/palace sync push
 ```
 
-> **ChromaDB version mismatch?** If you see a `KeyError: '_type'` error,
-> the sync will automatically fall back to reading your palace directly from
-> SQLite and push successfully. Fix the local palace permanently afterward:
-> `mempalace migrate`
+The push is **resumable** — state is checkpointed every 500 drawers to
+`~/.mempalace/sync_state.json`. If it crashes mid-run, just re-run the
+same command. It will skip everything already synced and continue from
+where it left off:
+
+```
+Local drawers: 23420
+Unchanged (skip): 2600     ← already on CF, skipped
+To push: 20820             ← only the remainder
+```
+
+Transient Worker errors (500, timeout) are retried automatically up to
+3 times with exponential backoff before failing.
 
 ---
 
@@ -249,8 +294,9 @@ wrangler d1 execute mempalace --file=./schema.sql
 ```
 
 **`KeyError: '_type'` during sync push**
-ChromaDB version mismatch. The sync will fall back to SQLite automatically.
-Fix permanently: `mempalace migrate`
+ChromaDB version mismatch. Run `mempalace migrate` first to rebuild the
+local palace, then re-run the push. See "Importing your existing local
+palace → Step 1" above.
 
 **Worker returns 401**
 Wrong API key. Check `MEMPALACE_CF_API_KEY` matches the secret you set with
