@@ -49,9 +49,9 @@ app.post("/drawers", async (c) => {
   const EMBED_BATCH = 25;
   const allVectors: VectorizeVector[] = [];
 
-  // bge-base-en-v1.5 context window is ~512 tokens (~2000 chars).
-  // Workers AI enforces a hard limit — truncate to 8000 chars to be safe.
-  // The full document is stored in D1; only the embedding is truncated.
+  // Documents are pre-chunked by the Python client (max 6000 chars each).
+  // No truncation needed here — if a document somehow exceeds the limit,
+  // slice as a safety net only.
   const EMBED_MAX_CHARS = 8000;
 
   for (let i = 0; i < drawers.length; i += EMBED_BATCH) {

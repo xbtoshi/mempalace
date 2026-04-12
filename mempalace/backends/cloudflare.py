@@ -29,6 +29,41 @@ def _require_httpx():
         )
 
 
+# Max chars per chunk sent to Workers AI for embedding.
+# bge-base-en-v1.5 is 512 tokens; ~6000 chars is safe with overlap room.
+CHUNK_SIZE = 6000
+CHUNK_OVERLAP = 400
+
+
+def _chunk_document(doc_id: str, text: str, meta: dict) -> List[dict]:
+    """Split a long document into overlapping chunks.
+
+    Each chunk gets a stable ID: <original_id>_c<n>
+    Metadata carries original_id + chunk_index so results can be
+    grouped or deduplicated by the caller.
+
+    Short documents (<=CHUNK_SIZE) are returned as-is with the original ID.
+    """
+    if len(text) <= CHUNK_SIZE:
+        return [{"id": doc_id, "document": text, "metadata": meta}]
+
+    chunks = []
+    start = 0
+    idx = 0
+    while start < len(text):
+        end = start + CHUNK_SIZE
+        chunk_text = text[start:end]
+        chunk_meta = {**meta, "original_id": doc_id, "chunk_index": idx}
+        chunks.append({
+            "id": f"{doc_id}_c{idx}",
+            "document": chunk_text,
+            "metadata": chunk_meta,
+        })
+        idx += 1
+        start += CHUNK_SIZE - CHUNK_OVERLAP
+    return chunks
+
+
 class CloudflareCollection(BaseCollection):
     """BaseCollection backed by the palace-api CF Worker.
 
@@ -66,16 +101,24 @@ class CloudflareCollection(BaseCollection):
         _retries: int = 5,
     ) -> None:
         import time as _time
+        # Expand long documents into overlapping chunks before sending.
+        # Each chunk is a separate drawer with a stable ID (<id>_c<n>).
         drawers = []
         for i, (doc, doc_id) in enumerate(zip(documents, ids)):
             meta = metadatas[i] if metadatas else {}
-            drawers.append({
-                "id": doc_id,
-                "document": doc,
+            flat_meta = {
                 "wing": meta.get("wing", "default"),
                 "room": meta.get("room", "general"),
                 "source_file": meta.get("source_file", ""),
-            })
+            }
+            for chunk in _chunk_document(doc_id, doc, flat_meta):
+                drawers.append({
+                    "id": chunk["id"],
+                    "document": chunk["document"],
+                    "wing": chunk["metadata"].get("wing", "default"),
+                    "room": chunk["metadata"].get("room", "general"),
+                    "source_file": chunk["metadata"].get("source_file", ""),
+                })
         last_exc = None
         for attempt in range(_retries):
             try:
