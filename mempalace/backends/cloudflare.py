@@ -63,7 +63,9 @@ class CloudflareCollection(BaseCollection):
         documents: List[str],
         ids: List[str],
         metadatas: Optional[List[Dict[str, Any]]] = None,
+        _retries: int = 3,
     ) -> None:
+        import time as _time
         drawers = []
         for i, (doc, doc_id) in enumerate(zip(documents, ids)):
             meta = metadatas[i] if metadatas else {}
@@ -74,9 +76,20 @@ class CloudflareCollection(BaseCollection):
                 "room": meta.get("room", "general"),
                 "source_file": meta.get("source_file", ""),
             })
-        with self._client() as client:
-            resp = client.post(f"{self._url}/drawers", json={"drawers": drawers})
-            resp.raise_for_status()
+        last_exc = None
+        for attempt in range(_retries):
+            try:
+                with self._client() as client:
+                    resp = client.post(f"{self._url}/drawers", json={"drawers": drawers})
+                    resp.raise_for_status()
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _retries - 1:
+                    wait = 2 ** attempt  # 1s, 2s, 4s
+                    print(f"  Retry {attempt + 1}/{_retries - 1} after {wait}s (error: {exc})")
+                    _time.sleep(wait)
+        raise last_exc
 
     def delete(self, **kwargs: Any) -> None:
         ids = kwargs.get("ids", [])

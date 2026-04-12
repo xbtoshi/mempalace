@@ -218,9 +218,10 @@ def push(palace_path: str, batch_size: int = DEFAULT_BATCH, dry_run: bool = Fals
     else:
         safe_to_push = to_push
 
-    # Push safe drawers in batches
+    # Push safe drawers in batches — checkpoint state every 500 drawers
     cf = _cf_backend()
     pushed = 0
+    CHECKPOINT_EVERY = 500
     for i in range(0, len(safe_to_push), batch_size):
         batch = safe_to_push[i:i + batch_size]
         cf.upsert(
@@ -232,6 +233,9 @@ def push(palace_path: str, batch_size: int = DEFAULT_BATCH, dry_run: bool = Fals
             mark_synced(state, d["id"], d["document"], "push")
         pushed += len(batch)
         print(f"  Pushed {pushed}/{len(safe_to_push)}...")
+        # Save state periodically so a crash mid-run resumes from here
+        if pushed % CHECKPOINT_EVERY < batch_size:
+            save_state(state)
 
     save_state(state)
 

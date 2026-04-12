@@ -45,8 +45,8 @@ app.post("/drawers", async (c) => {
   const drawers = body?.drawers;
   if (!drawers?.length) return c.json({ error: "No drawers provided" }, 400);
 
-  // Embed in batches of 100 (Workers AI limit)
-  const EMBED_BATCH = 100;
+  // Embed in batches of 25 — Workers AI free tier can timeout on larger batches
+  const EMBED_BATCH = 25;
   const allVectors: VectorizeVector[] = [];
 
   for (let i = 0; i < drawers.length; i += EMBED_BATCH) {
