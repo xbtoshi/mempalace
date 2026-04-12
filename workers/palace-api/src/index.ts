@@ -49,10 +49,15 @@ app.post("/drawers", async (c) => {
   const EMBED_BATCH = 25;
   const allVectors: VectorizeVector[] = [];
 
+  // bge-base-en-v1.5 context window is ~512 tokens (~2000 chars).
+  // Workers AI enforces a hard limit — truncate to 8000 chars to be safe.
+  // The full document is stored in D1; only the embedding is truncated.
+  const EMBED_MAX_CHARS = 8000;
+
   for (let i = 0; i < drawers.length; i += EMBED_BATCH) {
     const batch = drawers.slice(i, i + EMBED_BATCH);
     const embedResp = (await c.env.AI.run("@cf/baai/bge-base-en-v1.5", {
-      text: batch.map((d) => d.document),
+      text: batch.map((d) => d.document.slice(0, EMBED_MAX_CHARS)),
     })) as { data: number[][] };
 
     for (let j = 0; j < batch.length; j++) {
@@ -115,9 +120,9 @@ app.post("/search", async (c) => {
 
   if (!query) return c.json({ error: "query required" }, 400);
 
-  // Embed query
+  // Embed query — truncate to same limit as stored documents
   const embedResp = (await c.env.AI.run("@cf/baai/bge-base-en-v1.5", {
-    text: [query],
+    text: [query.slice(0, 8000)],
   })) as { data: number[][] };
   const queryVec = embedResp.data[0];
 
