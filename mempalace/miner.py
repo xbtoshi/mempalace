@@ -622,6 +622,43 @@ def mine(
 
 def status(palace_path: str):
     """Show what's been filed in the palace."""
+    import os
+
+    backend = os.environ.get("MEMPALACE_BACKEND", "chroma").lower()
+
+    if backend == "cloudflare":
+        # For CF use the /status endpoint directly — fast, no pagination needed
+        try:
+            from .backends.cloudflare import CloudflareBackend
+            import httpx
+            cf = CloudflareBackend()
+            col = cf.get_collection()
+            with col._client() as client:
+                resp = client.get(f"{col._url}/status")
+                resp.raise_for_status()
+                data = resp.json()
+            total = data.get("total_drawers", 0)
+            rooms_data = data.get("rooms", [])
+            print(f"\n{'=' * 55}")
+            print(f"  MemPalace Status — {total} drawers (Cloudflare)")
+            print(f"{'=' * 55}\n")
+            if rooms_data:
+                current_wing = None
+                for r in rooms_data:
+                    if r["wing"] != current_wing:
+                        current_wing = r["wing"]
+                        wing_total = sum(x["n"] for x in rooms_data if x["wing"] == current_wing)
+                        print(f"  WING: {current_wing}  ({wing_total} drawers)")
+                    print(f"    ROOM: {r['room']:20} {r['n']:5} drawers")
+                print()
+            else:
+                for w in data.get("wings", []):
+                    print(f"  WING: {w['wing']}  ({w['n']} drawers)")
+            print(f"{'=' * 55}\n")
+        except Exception as e:
+            print(f"\n  CF status error: {e}")
+        return
+
     try:
         col = get_collection(palace_path, create=False)
     except Exception:

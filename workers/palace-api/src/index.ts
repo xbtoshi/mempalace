@@ -181,7 +181,7 @@ app.get("/drawers", async (c) => {
   const wing = c.req.query("wing");
   const room = c.req.query("room");
   const source_file = c.req.query("source_file");
-  const limit = Math.min(parseInt(c.req.query("limit") ?? "500"), 500);
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "500"), 2000);
   const offset = parseInt(c.req.query("offset") ?? "0");
 
   const conditions: string[] = [];
@@ -230,8 +230,8 @@ app.delete("/drawers/:id", async (c) => {
   return c.json({ ok: true, id });
 });
 
-// ── GET /status ──────────────────────────────────────────────────
-// Palace stats — total drawers + wing breakdown.
+// ── GET /status ──────────────────────────────────────────────
+// Palace stats — total drawers, wing breakdown, wing+room breakdown.
 app.get("/status", async (c) => {
   const countRow = await c.env.DB.prepare(
     "SELECT COUNT(*) as n FROM drawers"
@@ -241,9 +241,14 @@ app.get("/status", async (c) => {
     "SELECT wing, COUNT(*) as n FROM drawers GROUP BY wing ORDER BY n DESC"
   ).all<{ wing: string; n: number }>();
 
+  const { results: rooms } = await c.env.DB.prepare(
+    "SELECT wing, room, COUNT(*) as n FROM drawers GROUP BY wing, room ORDER BY wing, n DESC"
+  ).all<{ wing: string; room: string; n: number }>();
+
   return c.json({
     total_drawers: countRow?.n ?? 0,
     wings,
+    rooms,
   });
 });
 
