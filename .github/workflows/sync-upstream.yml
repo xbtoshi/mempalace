@@ -1,0 +1,77 @@
+name: Sync fork with upstream
+
+on:
+  schedule:
+    # Every Monday at 06:00 UTC — syncs develop to upstream, reports feature branch drift
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-develop:
+    name: Fast-forward develop to upstream/develop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name  "mempalace-sync-bot"
+          git config user.email "mempalace-sync-bot@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/MemPalace/mempalace.git
+          git fetch upstream develop --tags
+
+      - name: Fast-forward develop
+        id: ff
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse upstream/develop)" ]; then
+            echo "result=in-sync" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git merge-base --is-ancestor HEAD upstream/develop; then
+            git merge --ff-only upstream/develop
+            echo "result=fast-forwarded" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=diverged" >> "$GITHUB_OUTPUT"
+            echo "::warning::develop has diverged from upstream/develop"
+            exit 1
+          fi
+
+      - name: Push develop
+        if: steps.ff.outputs.result == 'fast-forwarded'
+        run: |
+          git push origin develop
+          git push origin --tags
+
+  report-feature-drift:
+    name: Report drift on feature/cloudflare-d1-backend
+    runs-on: ubuntu-latest
+    needs: sync-develop
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/cloudflare-d1-backend
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/MemPalace/mempalace.git
+          git fetch upstream develop
+
+      - name: Drift report
+        run: |
+          BEHIND=$(git log --oneline HEAD..upstream/develop | wc -l | tr -d ' ')
+          AHEAD=$(git log --oneline upstream/develop..HEAD | wc -l | tr -d ' ')
+          echo "feature/cloudflare-d1-backend: $AHEAD ahead, $BEHIND behind upstream/develop"
+          if [ "$BEHIND" -gt 0 ]; then
+            echo "::notice::feature/cloudflare-d1-backend is $BEHIND commits behind upstream/develop — run ./scripts/sync-upstream.sh --rebase-feature"
+          fi

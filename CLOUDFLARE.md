@@ -314,3 +314,23 @@ If you want to force a full re-sync (re-push everything):
 rm ~/.mempalace/sync_state.json
 mempalace sync push
 ```
+
+## Staying in sync with upstream MemPalace
+
+This CF backend lives on `feature/cloudflare-d1-backend` in the xbtoshi/mempalace fork.
+Upstream (MemPalace/mempalace) is a local-first project — this backend is not planned
+for upstream merge. To pull upstream fixes/features into the fork:
+
+```bash
+# Syncs develop to upstream/develop (fast-forward)
+# and reports how far this feature branch drifts
+./scripts/sync-upstream.sh
+
+# Also rebases feature/cloudflare-d1-backend onto upstream/develop
+# (may hit conflicts — upstream refactored the backend seam in #413)
+./scripts/sync-upstream.sh --rebase-feature
+```
+
+A GitHub Action (`.github/workflows/sync-upstream.yml`) runs the develop sync weekly
+and reports feature-branch drift. Run it manually via Actions → "Sync fork with upstream"
+→ Run workflow.
